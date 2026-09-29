@@ -88,6 +88,9 @@ DATABASES = {
         'PASSWORD': config('DB_PASSWORD'),
         'HOST': config('DB_HOST'),
         'PORT': config('DB_PORT'),
+        'OPTIONS': {
+            'ssl': {'ca': str(BASE_DIR / 'ca.pem')},
+        },
     }
 }
 
