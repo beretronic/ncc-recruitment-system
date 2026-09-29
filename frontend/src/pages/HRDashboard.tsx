@@ -76,8 +76,6 @@ export default function HRDashboard() {
     }
   }
 
-  const selectedJob = jobs.find((j) => j.id === selectedJobId) || null;
-
   return (
     <div className="min-h-screen bg-slate-50">
       <Navbar />
