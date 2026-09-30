@@ -15,23 +15,19 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = config('SECRET_KEY')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-# Set DEBUG=False as an environment variable on Render. Defaults to False so a
-# missing env var fails safe instead of accidentally exposing debug pages.
 DEBUG = config('DEBUG', default=False, cast=bool)
 
-# Comma-separated list, e.g. "ncc-recruitment.onrender.com,127.0.0.1,localhost"
+# Comma-separated list
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='127.0.0.1,localhost', cast=Csv())
 
-# Render sits behind a reverse proxy that terminates HTTPS; this tells Django
-# to trust the X-Forwarded-Proto header so it knows the original request was
-# secure (needed for CSRF/cookie security checks to work correctly).
+# Render sits behind a reverse proxy that terminates HTTPS
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 
 # Application definition
 
 INSTALLED_APPS = [
-    'cloudinary_storage',  # must come before django.contrib.staticfiles
+    'cloudinary_storage',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -44,9 +40,7 @@ INSTALLED_APPS = [
     "recruitment",
 ]
 
-
 AUTH_USER_MODEL = "recruitment.User"
-
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -81,7 +75,6 @@ WSGI_APPLICATION = 'ncc_recruitment.wsgi.application'
 
 
 # Database
-# https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
 DATABASES = {
     'default': {
@@ -99,7 +92,6 @@ DATABASES = {
 
 
 # Password validation
-# https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators
 
 AUTH_PASSWORD_VALIDATORS = [
     {
@@ -118,28 +110,18 @@ AUTH_PASSWORD_VALIDATORS = [
 
 
 # Internationalization
-# https://docs.djangoproject.com/en/6.0/topics/i18n/
 
 LANGUAGE_CODE = 'en-us'
-
 TIME_ZONE = 'UTC'
-
 USE_I18N = True
-
 USE_TZ = True
 
 
-# Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/6.0/howto/static-files/
+# Static & Media files
 
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
-# Media files (uploaded CVs)
-# If CLOUDINARY_URL is set (on Render), CVs are stored on Cloudinary so they
-# survive redeploys and are served over HTTPS from Cloudinary's CDN.
-# If it's not set (normal local development), CVs go to the local media/ folder.
-# Format: cloudinary://<api_key>:<api_secret>@<cloud_name>
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
@@ -187,10 +169,6 @@ SIMPLE_JWT = {
 
 
 # Email
-# Locally (DEBUG=True), emails just print to the terminal -- convenient for
-# development and exactly what the automated test suite exercises. In
-# production (DEBUG=False), real emails are sent via Gmail SMTP using an
-# App Password, configured through environment variables on Render.
 
 if DEBUG:
     EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
@@ -199,22 +177,21 @@ else:
     EMAIL_HOST = config('EMAIL_HOST', default='smtp.gmail.com')
     EMAIL_PORT = config('EMAIL_PORT', default=587, cast=int)
     EMAIL_USE_TLS = config('EMAIL_USE_TLS', default=True, cast=bool)
-    EMAIL_HOST_USER = config('EMAIL_HOST_USER')          # your Gmail address
-    EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD')  # the 16-char App Password
+    EMAIL_HOST_USER = config('EMAIL_HOST_USER')
+    EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD')
 
 DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='noreply@ncc-recruitment.local')
 
 
-# CORS (which frontend origins are allowed to call this API from the browser)
-# Comma-separated list, e.g. "https://ncc-recruitment.vercel.app"
+# CORS & CSRF (Strip whitespace to prevent header drops)
 
 CORS_ALLOWED_ORIGINS = config(
     'CORS_ALLOWED_ORIGINS',
-    default='http://localhost:5173,http://127.0.0.1:5173',
-    cast=Csv(),
+    default='https://ncc-recruitment-system.vercel.app,http://localhost:5173,http://127.0.0.1:5173',
+    cast=Csv(strip_whitespace=True),
 )
 CSRF_TRUSTED_ORIGINS = config(
     'CSRF_TRUSTED_ORIGINS',
-    default='',
-    cast=Csv(),
+    default='https://ncc-recruitment-system.vercel.app',
+    cast=Csv(strip_whitespace=True),
 )
