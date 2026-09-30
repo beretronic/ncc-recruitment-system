@@ -4,6 +4,7 @@ Django settings for ncc_recruitment project.
 
 from pathlib import Path
 from datetime import timedelta
+from urllib.parse import urlparse
 from decouple import config, Csv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -30,12 +31,14 @@ SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 # Application definition
 
 INSTALLED_APPS = [
+    'cloudinary_storage',  # must come before django.contrib.staticfiles
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    "cloudinary",
     "rest_framework",
     "corsheaders",
     "recruitment",
@@ -131,21 +134,36 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+# Media files (uploaded CVs)
+# If CLOUDINARY_URL is set (on Render), CVs are stored on Cloudinary so they
+# survive redeploys and are served over HTTPS from Cloudinary's CDN.
+# If it's not set (normal local development), CVs go to the local media/ folder.
+# Format: cloudinary://<api_key>:<api_secret>@<cloud_name>
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
+
+CLOUDINARY_URL = config('CLOUDINARY_URL', default='')
+
+if CLOUDINARY_URL:
+    _cld = urlparse(CLOUDINARY_URL)
+    CLOUDINARY_STORAGE = {
+        'CLOUD_NAME': _cld.hostname,
+        'API_KEY': _cld.username,
+        'API_SECRET': _cld.password,
+    }
+    DEFAULT_FILE_STORAGE_BACKEND = 'cloudinary_storage.storage.RawMediaCloudinaryStorage'
+else:
+    DEFAULT_FILE_STORAGE_BACKEND = 'django.core.files.storage.FileSystemStorage'
+
 STORAGES = {
     "default": {
-        "BACKEND": "django.core.files.storage.FileSystemStorage",
+        "BACKEND": DEFAULT_FILE_STORAGE_BACKEND,
     },
     "staticfiles": {
         "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
     },
 }
-
-# Media files (uploaded CVs, etc.)
-# NOTE: Render's free tier filesystem is ephemeral -- uploaded CVs will be
-# lost on redeploy/restart. Fine for a student demo; for anything longer-
-# lived, swap this for a persistent store (e.g. Cloudinary's free tier).
-MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 

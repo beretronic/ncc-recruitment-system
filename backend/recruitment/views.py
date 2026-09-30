@@ -142,6 +142,7 @@ class ApplicationSubmitView(APIView):
                 return Response({"detail": "A very similar application already exists for this vacancy."}, status=status.HTTP_400_BAD_REQUEST)
 
         cv_text = extract_text_from_pdf(cv_file)
+        cv_file.seek(0)  # rewind after reading so the full PDF is uploaded to storage (Cloudinary)
         fit_score = compute_fit_score(cv_text, job.requirements)
 
         try:
