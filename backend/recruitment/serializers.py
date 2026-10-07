@@ -40,7 +40,7 @@ class JobSerializer(serializers.ModelSerializer):
             "deadline", "status", "posted_by", "posted_by_name",
             "created_at", "updated_by", "updated_by_name", "updated_at",
         ]
-        read_only_fields = ["posted_by", "status", "created_at", "updated_by", "updated_at"]
+        read_only_fields = ["posted_by", "created_at", "updated_by", "updated_at"]
 
 
 class ApplicationCreateSerializer(serializers.ModelSerializer):

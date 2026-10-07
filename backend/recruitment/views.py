@@ -89,6 +89,17 @@ class ApplicantMeView(APIView):
         return Response(serializer.data)
 
 
+def _auto_close_expired_jobs():
+    """
+    There is no scheduled task runner (Celery/cron) in this deployment, so
+    vacancies are closed "lazily": any job still marked open whose deadline
+    has passed gets flipped to closed the next time jobs are read. Cheap
+    (one UPDATE query) and keeps status accurate without needing a worker
+    process running continuously in the background.
+    """
+    Job.objects.filter(status="open", deadline__lt=timezone.now().date()).update(status="closed")
+
+
 class JobViewSet(viewsets.ModelViewSet):
     """
     HR/Admin: full CRUD.
@@ -104,6 +115,7 @@ class JobViewSet(viewsets.ModelViewSet):
         return [IsAuthenticated(), IsAdminOrHR()]
 
     def get_queryset(self):
+        _auto_close_expired_jobs()
         qs = Job.objects.all().order_by("-created_at")
         if self.action in ("list", "retrieve") and not (
             self.request.user and self.request.user.is_authenticated
@@ -131,7 +143,7 @@ class ApplicationSubmitView(APIView):
         cv_file = serializer.validated_data["cv_file"]
         applicant = request.user
 
-        if job.status != "open":
+        if job.status != "open" or job.deadline < timezone.now().date():
             return Response({"detail": "This vacancy is closed."}, status=status.HTTP_400_BAD_REQUEST)
 
         if Application.objects.filter(job=job, applicant=applicant).exists():
