@@ -1,4 +1,5 @@
 import secrets
+from datetime import timedelta
 from django.contrib.auth.hashers import check_password
 from django.core.mail import send_mail
 from django.utils import timezone
@@ -142,7 +143,6 @@ class ApplicationSubmitView(APIView):
                 return Response({"detail": "A very similar application already exists for this vacancy."}, status=status.HTTP_400_BAD_REQUEST)
 
         cv_text = extract_text_from_pdf(cv_file)
-        cv_file.seek(0)  # rewind after reading so the full PDF is uploaded to storage (Cloudinary)
         fit_score = compute_fit_score(cv_text, job.requirements)
 
         try:
@@ -199,7 +199,14 @@ class ApplicationDetailView(generics.RetrieveAPIView):
 
 
 def _apply_status_change(application, new_status, changed_by):
-    """Shared helper: updates status, writes audit log, emails the applicant (objectives 2, 4, 5)."""
+    """Shared helper: updates status, writes audit log, emails the applicant (objectives 2, 4, 5).
+
+    When the new status is "Interview", this also makes sure an Interview record
+    exists for the application. If HR scheduled one explicitly (via the
+    InterviewViewSet, with a chosen date/time) that one is used as-is. Otherwise
+    one is auto-scheduled for 08:00, 7 days from now (in the server's configured
+    local time zone), and that date is included in the notification email.
+    """
     old_status = application.status
     if old_status == new_status:
         return application
@@ -214,11 +221,25 @@ def _apply_status_change(application, new_status, changed_by):
         changed_by=changed_by,
     )
 
+    interview_line = ""
+    if new_status == "Interview":
+        interview = application.interviews.order_by("-date_time").first()
+        if interview is None:
+            scheduled = timezone.localtime(timezone.now()) + timedelta(days=7)
+            scheduled = scheduled.replace(hour=8, minute=0, second=0, microsecond=0)
+            interview = Interview.objects.create(application=application, date_time=scheduled)
+        interview_line = (
+            f"\n\nYour interview has been scheduled for "
+            f"{timezone.localtime(interview.date_time).strftime('%A, %d %B %Y at %H:%M')}. "
+            f"Please let us know if this time does not work for you."
+        )
+
     send_mail(
         subject=f"Application status update: {application.job.title}",
         message=(
             f"Hi {application.applicant.full_name}, your application for "
             f"{application.job.title} has changed from {old_status} to {new_status}."
+            f"{interview_line}"
         ),
         from_email=None,
         recipient_list=[application.applicant.email],

@@ -4,7 +4,6 @@ Django settings for ncc_recruitment project.
 
 from pathlib import Path
 from datetime import timedelta
-from urllib.parse import urlparse
 from decouple import config, Csv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -15,32 +14,36 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = config('SECRET_KEY')
 
 # SECURITY WARNING: don't run with debug turned on in production!
+# Set DEBUG=False as an environment variable on Render. Defaults to False so a
+# missing env var fails safe instead of accidentally exposing debug pages.
 DEBUG = config('DEBUG', default=False, cast=bool)
 
-# Comma-separated list
+# Comma-separated list, e.g. "ncc-recruitment.onrender.com,127.0.0.1,localhost"
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='127.0.0.1,localhost', cast=Csv())
 
-# Render sits behind a reverse proxy that terminates HTTPS
+# Render sits behind a reverse proxy that terminates HTTPS; this tells Django
+# to trust the X-Forwarded-Proto header so it knows the original request was
+# secure (needed for CSRF/cookie security checks to work correctly).
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 
 # Application definition
 
 INSTALLED_APPS = [
-    'cloudinary_storage',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    "cloudinary",
     "rest_framework",
     "corsheaders",
     "recruitment",
 ]
 
+
 AUTH_USER_MODEL = "recruitment.User"
+
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -75,6 +78,7 @@ WSGI_APPLICATION = 'ncc_recruitment.wsgi.application'
 
 
 # Database
+# https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
 DATABASES = {
     'default': {
@@ -92,6 +96,7 @@ DATABASES = {
 
 
 # Password validation
+# https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators
 
 AUTH_PASSWORD_VALIDATORS = [
     {
@@ -110,46 +115,37 @@ AUTH_PASSWORD_VALIDATORS = [
 
 
 # Internationalization
+# https://docs.djangoproject.com/en/6.0/topics/i18n/
 
 LANGUAGE_CODE = 'en-us'
-TIME_ZONE = 'UTC'
+
+TIME_ZONE = 'Africa/Harare'
+
 USE_I18N = True
+
 USE_TZ = True
 
 
-# Static & Media files
+# Static files (CSS, JavaScript, Images)
+# https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
-
-MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
-
-CLOUDINARY_URL = config('CLOUDINARY_URL', default='')
-
-if CLOUDINARY_URL:
-    _cld = urlparse(CLOUDINARY_URL)
-    CLOUDINARY_STORAGE = {
-        'CLOUD_NAME': _cld.hostname,
-        'API_KEY': _cld.username,
-        'API_SECRET': _cld.password,
-    }
-    DEFAULT_FILE_STORAGE_BACKEND = 'cloudinary_storage.storage.MediaCloudinaryStorage'
-    STATICFILES_STORAGE = 'cloudinary_storage.storage.StaticCloudinaryStorage'
-    DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
-else:
-    DEFAULT_FILE_STORAGE_BACKEND = 'django.core.files.storage.FileSystemStorage'
-    STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
-    DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
-
 STORAGES = {
     "default": {
-        "BACKEND": DEFAULT_FILE_STORAGE_BACKEND,
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
     },
     "staticfiles": {
         "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
     },
 }
+
+# Media files (uploaded CVs, etc.)
+# NOTE: Render's free tier filesystem is ephemeral -- uploaded CVs will be
+# lost on redeploy/restart. Fine for a student demo; for anything longer-
+# lived, swap this for a persistent store (e.g. Cloudinary's free tier).
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
@@ -169,6 +165,10 @@ SIMPLE_JWT = {
 
 
 # Email
+# Locally (DEBUG=True), emails just print to the terminal -- convenient for
+# development and exactly what the automated test suite exercises. In
+# production (DEBUG=False), real emails are sent via Gmail SMTP using an
+# App Password, configured through environment variables on Render.
 
 if DEBUG:
     EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
@@ -177,21 +177,22 @@ else:
     EMAIL_HOST = config('EMAIL_HOST', default='smtp.gmail.com')
     EMAIL_PORT = config('EMAIL_PORT', default=587, cast=int)
     EMAIL_USE_TLS = config('EMAIL_USE_TLS', default=True, cast=bool)
-    EMAIL_HOST_USER = config('EMAIL_HOST_USER')
-    EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD')
+    EMAIL_HOST_USER = config('EMAIL_HOST_USER')          # your Gmail address
+    EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD')  # the 16-char App Password
 
 DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='noreply@ncc-recruitment.local')
 
 
-# CORS & CSRF (Strip whitespace to prevent header drops)
+# CORS (which frontend origins are allowed to call this API from the browser)
+# Comma-separated list, e.g. "https://ncc-recruitment.vercel.app"
 
 CORS_ALLOWED_ORIGINS = config(
     'CORS_ALLOWED_ORIGINS',
-    default='https://ncc-recruitment-system.vercel.app,http://localhost:5173,http://127.0.0.1:5173',
-    cast=Csv(strip_whitespace=True),
+    default='http://localhost:5173,http://127.0.0.1:5173',
+    cast=Csv(),
 )
 CSRF_TRUSTED_ORIGINS = config(
     'CSRF_TRUSTED_ORIGINS',
-    default='https://ncc-recruitment-system.vercel.app',
-    cast=Csv(strip_whitespace=True),
+    default='',
+    cast=Csv(),
 )
