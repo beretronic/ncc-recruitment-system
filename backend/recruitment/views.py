@@ -127,7 +127,15 @@ class JobViewSet(viewsets.ModelViewSet):
         serializer.save(posted_by=self.request.user)
 
     def perform_update(self, serializer):
-        serializer.save(updated_by=self.request.user)
+        job = serializer.save(updated_by=self.request.user)
+        # Reopening a vacancy whose deadline already passed would otherwise get
+        # silently re-closed by _auto_close_expired_jobs() the next time jobs
+        # are listed, making "Reopen" appear to do nothing. If HR explicitly
+        # reopens an expired vacancy without also picking a new deadline,
+        # extend it forward automatically (14 days) so the reopen actually sticks.
+        if job.status == "open" and job.deadline < timezone.now().date():
+            job.deadline = timezone.now().date() + timedelta(days=14)
+            job.save(update_fields=["deadline"])
 
 
 class ApplicationSubmitView(APIView):

@@ -63,3 +63,29 @@ class ExpiredJobsAutoClose(TestCase):
         print(f"[AUTO-CLOSE] Apply to expired-but-still-'open' job -> HTTP {resp.status_code}: {resp.data}")
         self.assertEqual(resp.status_code, 400)
         self.assertEqual(Application.objects.count(), 0)
+
+
+class ReopeningExpiredVacancy(TestCase):
+    def test_reopening_past_deadline_job_extends_deadline_so_it_actually_stays_open(self):
+        hr = User.objects.create_user(username="hr_reopen", password="Passw0rd!123", role="hr")
+        yesterday = (timezone.now().date() - timedelta(days=1)).isoformat()
+        job = Job.objects.create(title="Expired Role", description="d", requirements="x",
+                                  deadline=yesterday, posted_by=hr, status="closed")
+
+        client = APIClient()
+        client.force_authenticate(user=hr)
+
+        # HR clicks "Reopen" (just flips status, same as the real frontend does)
+        resp = client.patch(f"/api/jobs/{job.id}/", {"status": "open"}, format="json")
+        self.assertEqual(resp.status_code, 200, resp.content)
+        job.refresh_from_db()
+        print(f"[REOPEN] After clicking Reopen -> status={job.status}, deadline={job.deadline}")
+        self.assertEqual(job.status, "open")
+        self.assertGreater(job.deadline, timezone.now().date())
+
+        # Simulate the auto-close check running on a later page load (e.g. listing jobs)
+        list_resp = client.get("/api/jobs/")
+        self.assertEqual(list_resp.status_code, 200)
+        job.refresh_from_db()
+        print(f"[REOPEN] After a later jobs list fetch -> status={job.status} (should still be open)")
+        self.assertEqual(job.status, "open")
