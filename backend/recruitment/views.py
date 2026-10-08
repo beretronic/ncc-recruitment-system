@@ -1,3 +1,4 @@
+import logging
 import secrets
 from datetime import timedelta
 from django.contrib.auth.hashers import check_password
@@ -26,6 +27,26 @@ from .matching import extract_text_from_pdf, compute_fit_score, is_duplicate_app
 from .dashboard import get_dashboard_summary, get_top_candidates
 
 
+logger = logging.getLogger(__name__)
+
+
+def _send_email_safely(subject, message, recipient):
+    """
+    Send an email without letting an SMTP problem (slow connection, auth
+    error, Gmail throttling) crash the request. Callers have usually already
+    saved something to the database by this point, so an exception here would
+    turn a successful action into a failed-looking one (a 500 with no CORS
+    headers, which browsers report as a CORS error). Failures are logged
+    instead, so they show up in the server logs.
+    """
+    try:
+        send_mail(subject=subject, message=message, from_email=None, recipient_list=[recipient])
+        return True
+    except Exception:
+        logger.exception("Failed to send email to %s (subject: %s)", recipient, subject)
+        return False
+
+
 class ApplicantRegisterView(generics.CreateAPIView):
     queryset = Applicant.objects.all()
     serializer_class = ApplicantRegisterSerializer
@@ -33,11 +54,10 @@ class ApplicantRegisterView(generics.CreateAPIView):
 
     def perform_create(self, serializer):
         applicant = serializer.save(verification_token=secrets.token_urlsafe(32))
-        send_mail(
-            subject="Verify your NCC Recruitment account",
-            message=f"Welcome {applicant.full_name}. Your verification token is: {applicant.verification_token}",
-            from_email=None,
-            recipient_list=[applicant.email],
+        _send_email_safely(
+            "Verify your NCC Recruitment account",
+            f"Welcome {applicant.full_name}. Your verification token is: {applicant.verification_token}",
+            applicant.email,
         )
 
 
@@ -254,15 +274,14 @@ def _apply_status_change(application, new_status, changed_by):
             f"Please let us know if this time does not work for you."
         )
 
-    send_mail(
-        subject=f"Application status update: {application.job.title}",
-        message=(
+    _send_email_safely(
+        f"Application status update: {application.job.title}",
+        (
             f"Hi {application.applicant.full_name}, your application for "
             f"{application.job.title} has changed from {old_status} to {new_status}."
             f"{interview_line}"
         ),
-        from_email=None,
-        recipient_list=[application.applicant.email],
+        application.applicant.email,
     )
     return application
 

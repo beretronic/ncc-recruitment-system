@@ -180,6 +180,9 @@ else:
     EMAIL_HOST_USER = config('EMAIL_HOST_USER')          # your Gmail address
     EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD')  # the 16-char App Password
 
+# Give up on a stuck SMTP connection after 10s (gunicorn kills workers at 30s)
+EMAIL_TIMEOUT = 10
+
 DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='noreply@ncc-recruitment.local')
 
 
