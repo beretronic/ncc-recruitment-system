@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Navbar } from "../components/Navbar";
 import { StaffFormModal } from "../components/StaffFormModal";
+import { DeletionRequestsPanel } from "../components/DeletionRequestsPanel";
 import { useAuth } from "../context/AuthContext";
 import {
   getAdminSummary,
@@ -97,6 +98,8 @@ export default function AdminDashboard() {
                 {error}
               </p>
             )}
+
+            <DeletionRequestsPanel />
 
             {/* ---- Tabs ---- */}
             <div className="flex gap-2 mb-4">

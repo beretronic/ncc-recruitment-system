@@ -4,9 +4,14 @@ import { JobFormModal } from "../components/JobFormModal";
 import { JobApplicantsPanel } from "../components/JobApplicantsPanel";
 import { ApplicationReviewModal } from "../components/ApplicationReviewModal";
 import { useAuth } from "../context/AuthContext";
-import { listJobs, createJob, updateJob } from "../api/jobs";
+import { listJobs, createJob, updateJob, deleteJob } from "../api/jobs";
+import { requestJobDeletion, apiErrorMessage } from "../api/deletionRequests";
+import { DeleteRequestModal } from "../components/DeleteRequestModal";
 import { getDashboardSummary, getApplication } from "../api/applications";
 import type { Job, DashboardSummary, Application } from "../types";
+
+// The API now also tells us whether a deletion request is awaiting Admin approval.
+type JobRow = Job & { deletion_pending?: boolean };
 
 export default function HRDashboard() {
   const { staffUser } = useAuth();
@@ -16,6 +21,7 @@ export default function HRDashboard() {
 
   const [showForm, setShowForm] = useState(false);
   const [editingJob, setEditingJob] = useState<Job | null>(null);
+  const [requestingJob, setRequestingJob] = useState<Job | null>(null);
   const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
   const [reviewing, setReviewing] = useState<Application | null>(null);
   const [reviewLoading, setReviewLoading] = useState(false);
@@ -66,6 +72,31 @@ export default function HRDashboard() {
     loadAll();
   }
 
+  async function handleDelete(job: Job) {
+    const confirmed = window.confirm(
+      `Delete the vacancy "${job.title}"?\n\n` +
+        "This permanently removes the vacancy AND every application, interview and " +
+        "status-history record linked to it. This cannot be undone.\n\n" +
+        "If you only want to stop accepting applications, use Close instead."
+    );
+    if (!confirmed) return;
+    try {
+      await deleteJob(job.id);
+      if (selectedJobId === job.id) setSelectedJobId(null);
+      loadAll();
+    } catch {
+      window.alert("Could not delete this vacancy. Please try again.");
+    }
+  }
+
+  // HR cannot delete directly: this files a request for an Admin to approve.
+  async function handleRequestDeletion(reason: string) {
+    if (!requestingJob) return;
+    await requestJobDeletion(requestingJob.id, reason);
+    setRequestingJob(null);
+    loadAll();
+  }
+
   async function openReview(applicationId: number) {
     setReviewLoading(true);
     try {
@@ -75,6 +106,7 @@ export default function HRDashboard() {
       setReviewLoading(false);
     }
   }
+
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -199,6 +231,23 @@ export default function HRDashboard() {
                           >
                             Edit
                           </button>
+                          {staffUser?.role === "admin" ? (
+                            <button
+                              onClick={() => handleDelete(job)}
+                              className="text-red-500 hover:underline"
+                            >
+                              Delete
+                            </button>
+                          ) : (job as JobRow).deletion_pending ? (
+                            <span className="text-amber-600">Deletion pending approval</span>
+                          ) : (
+                            <button
+                              onClick={() => setRequestingJob(job)}
+                              className="text-red-500 hover:underline"
+                            >
+                              Request deletion
+                            </button>
+                          )}
                         </div>
                       </div>
 
@@ -281,6 +330,15 @@ export default function HRDashboard() {
             setEditingJob(null);
           }}
           onSubmit={handleCreateOrEdit}
+        />
+      )}
+
+      {requestingJob && (
+        <DeleteRequestModal
+          jobTitle={requestingJob.title}
+          onCancel={() => setRequestingJob(null)}
+          onSubmit={handleRequestDeletion}
+          errorMessage={(err) => apiErrorMessage(err, "Could not send the request. Please try again.")}
         />
       )}
 

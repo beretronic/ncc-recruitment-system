@@ -4,15 +4,17 @@ from datetime import timedelta
 from django.contrib.auth.hashers import check_password
 from django.core.mail import send_mail
 from django.utils import timezone
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, status, viewsets
+from rest_framework.decorators import action
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 
-from .models import User, Applicant, Job, Application, StatusAuditLog, Interview
+from .models import User, Applicant, Job, Application, StatusAuditLog, Interview, JobDeletionRequest
 from .serializers import (
+    JobDeletionRequestSerializer,
     ApplicantRegisterSerializer, ApplicantSerializer, JobSerializer,
     ApplicationCreateSerializer, ApplicationSerializer,
     StatusUpdateSerializer, BulkStatusUpdateSerializer,
@@ -122,8 +124,11 @@ def _auto_close_expired_jobs():
 
 class JobViewSet(viewsets.ModelViewSet):
     """
-    HR/Admin: full CRUD.
-    Anyone (including anonymous applicants): can list/retrieve OPEN jobs only.
+    HR/Admin: create, read, update.
+    Delete: Admin only. HR must raise a deletion request instead (see
+    request_deletion below), which an Admin approves or rejects.
+    Everyone else -- anonymous visitors AND logged-in applicants -- can only
+    list/retrieve OPEN jobs.
     """
     serializer_class = JobSerializer
 
@@ -134,12 +139,19 @@ class JobViewSet(viewsets.ModelViewSet):
             return [IsAuthenticated(), IsAdmin()]
         return [IsAuthenticated(), IsAdminOrHR()]
 
+    def _requester_is_staff(self):
+        user = self.request.user
+        return bool(
+            user and user.is_authenticated and getattr(user, "role", None) in ("admin", "hr")
+        )
+
     def get_queryset(self):
         _auto_close_expired_jobs()
-        qs = Job.objects.all().order_by("-created_at")
-        if self.action in ("list", "retrieve") and not (
-            self.request.user and self.request.user.is_authenticated
-        ):
+        qs = Job.objects.all().order_by("-created_at").prefetch_related("deletion_requests")
+        # Previously this filter was skipped for ANY authenticated user, which
+        # includes logged-in applicants -- so they saw closed vacancies. Only
+        # staff (who need closed jobs to reopen/edit them) get the full list.
+        if self.action in ("list", "retrieve") and not self._requester_is_staff():
             qs = qs.filter(status="open", deadline__gte=timezone.now().date())
         return qs
 
@@ -156,6 +168,75 @@ class JobViewSet(viewsets.ModelViewSet):
         if job.status == "open" and job.deadline < timezone.now().date():
             job.deadline = timezone.now().date() + timedelta(days=14)
             job.save(update_fields=["deadline"])
+
+    def perform_destroy(self, instance):
+        # An Admin deleting directly satisfies any request already waiting on
+        # this vacancy -- close those out so they don't linger as "pending".
+        instance.deletion_requests.filter(status="pending").update(
+            status="approved", decided_by=self.request.user, decided_at=timezone.now()
+        )
+        instance.delete()
+
+    @action(detail=True, methods=["post"], url_path="request-deletion")
+    def request_deletion(self, request, pk=None):
+        """HR asks for a vacancy to be deleted; nothing is deleted until an Admin approves."""
+        job = self.get_object()
+        if request.user.role == "admin":
+            return Response(
+                {"detail": "Admins can delete a vacancy directly; no request is needed."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        reason = (request.data.get("reason") or "").strip()
+        if len(reason) < 5:
+            return Response(
+                {"reason": ["Please give a reason (at least 5 characters)."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if job.deletion_requests.filter(status="pending").exists():
+            return Response(
+                {"detail": "A deletion request for this vacancy is already awaiting Admin approval."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        req = JobDeletionRequest.objects.create(
+            job=job, job_title=job.title, reason=reason, requested_by=request.user
+        )
+        return Response(JobDeletionRequestSerializer(req).data, status=status.HTTP_201_CREATED)
+
+
+class DeletionRequestListView(generics.ListAPIView):
+    """Admin only. Pending requests by default; add ?status=all for the full history."""
+    permission_classes = [IsAuthenticated, IsAdmin]
+    serializer_class = JobDeletionRequestSerializer
+
+    def get_queryset(self):
+        qs = JobDeletionRequest.objects.select_related("requested_by", "decided_by", "job")
+        if self.request.query_params.get("status") == "all":
+            return qs.order_by("-requested_at")
+        return qs.filter(status="pending").order_by("-requested_at")
+
+
+class DeletionRequestDecisionView(APIView):
+    """Admin only. Approve (deletes the vacancy) or reject (leaves it untouched)."""
+    permission_classes = [IsAuthenticated, IsAdmin]
+    decision = None  # set per-URL: "approve" | "reject"
+
+    def post(self, request, pk):
+        with transaction.atomic():
+            req = get_object_or_404(JobDeletionRequest.objects.select_for_update(), pk=pk)
+            if req.status != "pending":
+                return Response(
+                    {"detail": "This request has already been decided."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            approving = self.decision == "approve"
+            req.status = "approved" if approving else "rejected"
+            req.decided_by = request.user
+            req.decided_at = timezone.now()
+            req.save()
+            if approving and req.job_id:
+                req.job.delete()  # cascades to applications/interviews/audit rows; request row survives (SET_NULL)
+        req.refresh_from_db()
+        return Response(JobDeletionRequestSerializer(req).data)
 
 
 class ApplicationSubmitView(APIView):

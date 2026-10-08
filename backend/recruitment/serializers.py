@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.hashers import make_password
-from .models import User, Applicant, Job, Application, StatusAuditLog, Interview
+from .models import User, Applicant, Job, Application, StatusAuditLog, Interview, JobDeletionRequest
 
 
 class ApplicantRegisterSerializer(serializers.ModelSerializer):
@@ -32,6 +32,7 @@ class ApplicantSerializer(serializers.ModelSerializer):
 class JobSerializer(serializers.ModelSerializer):
     posted_by_name = serializers.CharField(source="posted_by.username", read_only=True)
     updated_by_name = serializers.CharField(source="updated_by.username", read_only=True, default=None)
+    deletion_pending = serializers.SerializerMethodField()
 
     class Meta:
         model = Job
@@ -39,8 +40,32 @@ class JobSerializer(serializers.ModelSerializer):
             "id", "title", "description", "requirements", "location",
             "deadline", "status", "posted_by", "posted_by_name",
             "created_at", "updated_by", "updated_by_name", "updated_at",
+            "deletion_pending",
         ]
         read_only_fields = ["posted_by", "created_at", "updated_by", "updated_at"]
+
+    def get_deletion_pending(self, obj):
+        # .all() uses the prefetch set up in JobViewSet.get_queryset (no N+1 queries)
+        return any(r.status == "pending" for r in obj.deletion_requests.all())
+
+
+class JobDeletionRequestSerializer(serializers.ModelSerializer):
+    requested_by_name = serializers.CharField(source="requested_by.username", read_only=True, default=None)
+    decided_by_name = serializers.CharField(source="decided_by.username", read_only=True, default=None)
+    application_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = JobDeletionRequest
+        fields = [
+            "id", "job", "job_title", "reason", "status",
+            "requested_by", "requested_by_name", "requested_at",
+            "decided_by", "decided_by_name", "decided_at", "application_count",
+        ]
+        read_only_fields = fields
+
+    def get_application_count(self, obj):
+        # How many applications would be wiped along with the vacancy.
+        return obj.job.applications.count() if obj.job_id else 0
 
 
 class ApplicationCreateSerializer(serializers.ModelSerializer):

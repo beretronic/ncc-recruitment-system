@@ -101,3 +101,32 @@ class StatusAuditLog(models.Model):
 
     def __str__(self):
         return f"{self.application} : {self.old_status} -> {self.new_status}"
+
+
+class JobDeletionRequest(models.Model):
+    """
+    HR cannot delete a vacancy directly (deleting also wipes every application,
+    interview and audit-log row linked to it). Instead HR raises a request that
+    an Admin approves or rejects. The request row is kept permanently as a record
+    of who asked, why, and who decided -- so `job` is SET_NULL (the request
+    outlives the vacancy) and the title is snapshotted.
+    """
+    STATUS_CHOICES = [
+        ("pending", "Pending"),
+        ("approved", "Approved"),
+        ("rejected", "Rejected"),
+    ]
+    job = models.ForeignKey(Job, on_delete=models.SET_NULL, null=True, blank=True,
+                            related_name="deletion_requests")
+    job_title = models.CharField(max_length=150)
+    reason = models.TextField()
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default="pending")
+    requested_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True,
+                                     related_name="deletion_requests_made")
+    requested_at = models.DateTimeField(auto_now_add=True)
+    decided_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="deletion_requests_decided")
+    decided_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"Deletion request for '{self.job_title}' ({self.status})"

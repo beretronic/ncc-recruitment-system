@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
-from .models import User, Applicant, Job, Application, Interview, StatusAuditLog
+from .models import User, Applicant, Job, Application, Interview, StatusAuditLog, JobDeletionRequest
 
 
 class CustomUserAdmin(UserAdmin):
@@ -25,3 +25,4 @@ admin.site.register(Job)
 admin.site.register(Application)
 admin.site.register(Interview)
 admin.site.register(StatusAuditLog)
+admin.site.register(JobDeletionRequest)
