@@ -130,3 +130,18 @@ class JobDeletionRequest(models.Model):
 
     def __str__(self):
         return f"Deletion request for '{self.job_title}' ({self.status})"
+
+
+class ApplicationCV(models.Model):
+    """
+    The uploaded CV itself, stored in the database rather than on disk.
+    Render's free tier has an ephemeral filesystem (wiped whenever the service
+    sleeps or redeploys), so files written to MEDIA_ROOT do not survive. Kept in a
+    separate table so ordinary Application queries never load the file bytes.
+    """
+    application = models.OneToOneField(Application, on_delete=models.CASCADE, related_name="cv_blob")
+    data = models.BinaryField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"CV for application {self.application_id}"

@@ -180,8 +180,10 @@ else:
     EMAIL_HOST_USER = config('EMAIL_HOST_USER')          # your Gmail address
     EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD')  # the 16-char App Password
 
-# Give up on a stuck SMTP connection after 10s (gunicorn kills workers at 30s)
-EMAIL_TIMEOUT = 10
+# Emails are sent from a background thread in production, so a slow SMTP
+# server can no longer stall a web request; give the connection longer to succeed.
+EMAIL_TIMEOUT = 30
+EMAIL_SEND_IN_BACKGROUND = config('EMAIL_SEND_IN_BACKGROUND', default=not DEBUG, cast=bool)
 
 DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='noreply@ncc-recruitment.local')
 

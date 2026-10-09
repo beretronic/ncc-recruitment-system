@@ -78,6 +78,9 @@ class ApplicationCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Only PDF files are accepted.")
         if value.content_type != "application/pdf":
             raise serializers.ValidationError("Only PDF files are accepted.")
+        # CVs are stored in the database, so keep them a sensible size.
+        if value.size > 5 * 1024 * 1024:
+            raise serializers.ValidationError("CV must be 5 MB or smaller.")
         return value
 
 

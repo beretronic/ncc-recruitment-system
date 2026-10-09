@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { api } from "../api/client";
 import {
   updateApplicationStatus,
   getAuditLog,
@@ -32,11 +33,37 @@ export function ApplicationReviewModal({
   onChanged: () => void;
 }) {
   const [current, setCurrent] = useState(application);
+  // The CV is fetched with the login token and shown from a local blob URL. It is
+  // not served from a public address, so it stays private and works regardless of
+  // browser iframe restrictions.
+  const [cvUrl, setCvUrl] = useState<string | null>(null);
+  const [cvError, setCvError] = useState(false);
   const [busy, setBusy] = useState(false);
   const [auditEntries, setAuditEntries] = useState<StatusAuditLogEntry[]>([]);
   const [showInterviewForm, setShowInterviewForm] = useState(false);
   const [interviewDate, setInterviewDate] = useState("");
   const [interviewNotes, setInterviewNotes] = useState("");
+
+  useEffect(() => {
+    let objectUrl: string | null = null;
+    let cancelled = false;
+    setCvUrl(null);
+    setCvError(false);
+    api
+      .get(`/applications/${current.id}/cv/`, { responseType: "blob" })
+      .then((res) => {
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(res.data);
+        setCvUrl(objectUrl);
+      })
+      .catch(() => {
+        if (!cancelled) setCvError(true);
+      });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [current.id]);
 
   useEffect(() => {
     getAuditLog(application.id).then(setAuditEntries);
@@ -102,20 +129,32 @@ export function ApplicationReviewModal({
               <h3 className="text-sm font-semibold text-slate-700 uppercase tracking-wide">
                 CV
               </h3>
-              <a
-                href={current.cv_file}
-                target="_blank"
-                rel="noreferrer"
-                className="text-xs text-emerald-600 hover:underline"
-              >
-                Open in new tab
-              </a>
+              {cvUrl && (
+                <a
+                  href={cvUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-xs text-emerald-600 hover:underline"
+                >
+                  Open in new tab
+                </a>
+              )}
             </div>
-            <iframe
-              src={current.cv_file}
-              title="CV preview"
-              className="w-full h-96 border border-slate-200 rounded-md"
-            />
+            {cvError ? (
+              <div className="w-full h-40 border border-slate-200 rounded-md bg-slate-50 flex items-center justify-center text-sm text-slate-500 px-4 text-center">
+                This CV file is no longer available.
+              </div>
+            ) : !cvUrl ? (
+              <div className="w-full h-40 border border-slate-200 rounded-md bg-slate-50 flex items-center justify-center text-sm text-slate-500">
+                Loading CV...
+              </div>
+            ) : (
+              <iframe
+                src={cvUrl}
+                title="CV preview"
+                className="w-full h-96 border border-slate-200 rounded-md"
+              />
+            )}
           </div>
 
           {/* ---- Actions - only shown after the CV is visible above ---- */}

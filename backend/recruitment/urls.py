@@ -7,7 +7,7 @@ from .views import (
     InterviewViewSet, JobRecommendationsView, DashboardSummaryView, JobLeaderboardView,
     StaffMeView, StaffListCreateView, StaffDetailView,
     ApplicantAdminListView, ApplicantAdminDetailView, AdminSummaryView,
-    ApplicationDetailView, DeletionRequestListView, DeletionRequestDecisionView,
+    ApplicationDetailView, ApplicationCVView, DeletionRequestListView, DeletionRequestDecisionView,
 )
 
 router = DefaultRouter()
@@ -25,6 +25,7 @@ urlpatterns = [
     path("applications/bulk-status/", BulkStatusUpdateView.as_view(), name="application-bulk-status"),
     path("applications/<int:application_id>/status/", ApplicationStatusUpdateView.as_view(), name="application-status"),
     path("applications/<int:application_id>/audit-log/", ApplicationAuditLogView.as_view(), name="application-audit-log"),
+    path("applications/<int:pk>/cv/", ApplicationCVView.as_view(), name="application-cv"),
     path("applications/<int:pk>/", ApplicationDetailView.as_view(), name="application-detail"),
 
     path("deletion-requests/", DeletionRequestListView.as_view(), name="deletion-request-list"),

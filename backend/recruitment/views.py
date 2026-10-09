@@ -1,10 +1,13 @@
 import logging
 import secrets
+import threading
 from datetime import timedelta
+from django.conf import settings
 from django.contrib.auth.hashers import check_password
 from django.core.mail import send_mail
 from django.utils import timezone
 from django.db import IntegrityError, transaction
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, status, viewsets
 from rest_framework.decorators import action
@@ -12,7 +15,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 
-from .models import User, Applicant, Job, Application, StatusAuditLog, Interview, JobDeletionRequest
+from .models import User, Applicant, Job, Application, StatusAuditLog, Interview, JobDeletionRequest, ApplicationCV
 from .serializers import (
     JobDeletionRequestSerializer,
     ApplicantRegisterSerializer, ApplicantSerializer, JobSerializer,
@@ -34,19 +37,28 @@ logger = logging.getLogger(__name__)
 
 def _send_email_safely(subject, message, recipient):
     """
-    Send an email without letting an SMTP problem (slow connection, auth
-    error, Gmail throttling) crash the request. Callers have usually already
-    saved something to the database by this point, so an exception here would
-    turn a successful action into a failed-looking one (a 500 with no CORS
-    headers, which browsers report as a CORS error). Failures are logged
-    instead, so they show up in the server logs.
+    Send an email without letting SMTP problems break the request.
+
+    Why this exists: Render's free tier blocks or throttles outbound SMTP, and
+    Gmail can be slow. Sending inline meant a stalled connection made the whole
+    request fail AFTER the database row had been saved (the user sees an error,
+    retries, and is told "already applied"/"already registered"). So:
+      * failures are caught and logged, never raised, and
+      * in production (EMAIL_SEND_IN_BACKGROUND) the send happens in a
+        background thread, so the HTTP response never waits on Gmail at all.
     """
-    try:
-        send_mail(subject=subject, message=message, from_email=None, recipient_list=[recipient])
-        return True
-    except Exception:
-        logger.exception("Failed to send email to %s (subject: %s)", recipient, subject)
-        return False
+    def _deliver():
+        try:
+            send_mail(subject=subject, message=message, from_email=None, recipient_list=[recipient])
+            return True
+        except Exception:
+            logger.exception("Failed to send email to %s (subject: %s)", recipient, subject)
+            return False
+
+    if getattr(settings, "EMAIL_SEND_IN_BACKGROUND", False):
+        threading.Thread(target=_deliver, daemon=True).start()
+        return True  # queued; the outcome is only visible in the logs
+    return _deliver()
 
 
 class ApplicantRegisterView(generics.CreateAPIView):
@@ -265,24 +277,30 @@ class ApplicationSubmitView(APIView):
 
         cv_text = extract_text_from_pdf(cv_file)
         fit_score = compute_fit_score(cv_text, job.requirements)
+        cv_file.seek(0)
+        cv_bytes = cv_file.read()
+        cv_file.seek(0)
 
         try:
-            application = Application.objects.create(
-                job=job, applicant=applicant, cv_file=cv_file,
-                cv_text=cv_text, fit_score=fit_score, status="Applied",
-            )
+            # One transaction: the application, its stored CV and its audit entry
+            # all exist, or none do. A failure can never leave a half-created
+            # application that then blocks a retry with "already applied".
+            with transaction.atomic():
+                application = Application.objects.create(
+                    job=job, applicant=applicant, cv_file=cv_file,
+                    cv_text=cv_text, fit_score=fit_score, status="Applied",
+                )
+                ApplicationCV.objects.create(application=application, data=cv_bytes)
+                StatusAuditLog.objects.create(
+                    application=application, old_status="", new_status="Applied", changed_by=None,
+                )
         except IntegrityError:
             return Response({"detail": "You have already applied for this vacancy."}, status=status.HTTP_400_BAD_REQUEST)
 
-        StatusAuditLog.objects.create(
-            application=application, old_status="", new_status="Applied", changed_by=None,
-        )
-
-        send_mail(
-            subject=f"Application received: {job.title}",
-            message=f"Hi {applicant.full_name}, your application for {job.title} has been received.",
-            from_email=None,
-            recipient_list=[applicant.email],
+        _send_email_safely(
+            f"Application received: {job.title}",
+            f"Hi {applicant.full_name}, your application for {job.title} has been received.",
+            applicant.email,
         )
 
         return Response(ApplicationSerializer(application).data, status=status.HTTP_201_CREATED)
@@ -317,6 +335,46 @@ class ApplicationDetailView(generics.RetrieveAPIView):
     permission_classes = [IsAuthenticated, IsAdminOrHR]
     serializer_class = ApplicationSerializer
     queryset = Application.objects.all()
+
+
+class ApplicationCVView(APIView):
+    """
+    Serves an application's CV PDF. Allowed for HR/Admin, and for the applicant
+    who owns the application -- nobody else. The frontend fetches this with the
+    login token and shows it from a blob URL, so CVs are never exposed at a
+    public, guessable address and the browser's iframe/X-Frame-Options rules
+    don't get in the way.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        application = get_object_or_404(Application, pk=pk)
+        user = request.user
+        is_staff = getattr(user, "role", None) in ("admin", "hr")
+        is_owner = bool(getattr(user, "is_applicant", False)) and application.applicant_id == user.id
+        if not (is_staff or is_owner):
+            return Response({"detail": "You do not have permission to view this CV."},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        data = None
+        stored = ApplicationCV.objects.filter(application=application).values_list("data", flat=True).first()
+        if stored:
+            data = bytes(stored)
+        else:
+            # CVs uploaded before database storage existed: use the old on-disk
+            # copy if it somehow survived; otherwise it is gone.
+            try:
+                with application.cv_file.open("rb") as f:
+                    data = f.read()
+            except (FileNotFoundError, ValueError, OSError):
+                data = None
+
+        if not data:
+            return Response({"detail": "This CV file is no longer available."},
+                            status=status.HTTP_404_NOT_FOUND)
+        response = HttpResponse(data, content_type="application/pdf")
+        response["Content-Disposition"] = f'inline; filename="cv-{application.id}.pdf"'
+        return response
 
 
 def _apply_status_change(application, new_status, changed_by):
