@@ -377,6 +377,30 @@ class ApplicationCVView(APIView):
         return response
 
 
+def _format_interview_time(dt):
+    return timezone.localtime(dt).strftime("%A, %d %B %Y at %H:%M")
+
+
+def _notify_interview_scheduled(application, interview):
+    """
+    Email the applicant their interview date/time. Used when HR explicitly
+    schedules an interview for an application that is ALREADY at "Interview"
+    (e.g. after "Move to Interview" auto-scheduled one) -- in that case there is
+    no status change, so the normal status-update email never fires.
+    """
+    rescheduled = application.interviews.exclude(pk=interview.pk).exists()
+    verb = "has been rescheduled to" if rescheduled else "is scheduled for"
+    _send_email_safely(
+        f"Interview {'rescheduled' if rescheduled else 'scheduled'}: {application.job.title}",
+        (
+            f"Hi {application.applicant.full_name}, your interview for "
+            f"{application.job.title} {verb} {_format_interview_time(interview.date_time)}. "
+            f"Please let us know if this time does not work for you."
+        ),
+        application.applicant.email,
+    )
+
+
 def _apply_status_change(application, new_status, changed_by):
     """Shared helper: updates status, writes audit log, emails the applicant (objectives 2, 4, 5).
 
@@ -402,14 +426,14 @@ def _apply_status_change(application, new_status, changed_by):
 
     interview_line = ""
     if new_status == "Interview":
-        interview = application.interviews.order_by("-date_time").first()
+        interview = application.interviews.order_by("-id").first()
         if interview is None:
             scheduled = timezone.localtime(timezone.now()) + timedelta(days=7)
             scheduled = scheduled.replace(hour=8, minute=0, second=0, microsecond=0)
             interview = Interview.objects.create(application=application, date_time=scheduled)
         interview_line = (
             f"\n\nYour interview has been scheduled for "
-            f"{timezone.localtime(interview.date_time).strftime('%A, %d %B %Y at %H:%M')}. "
+            f"{_format_interview_time(interview.date_time)}. "
             f"Please let us know if this time does not work for you."
         )
 
@@ -483,7 +507,15 @@ class InterviewViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         interview = serializer.save()
-        _apply_status_change(interview.application, "Interview", self.request.user)
+        application = interview.application
+        if application.status != "Interview":
+            # Moves the application to Interview, logs it, and emails the new
+            # status together with this interview's date.
+            _apply_status_change(application, "Interview", self.request.user)
+        else:
+            # Already at Interview: no status change, so the status email would
+            # never fire -- send the interview details directly instead.
+            _notify_interview_scheduled(application, interview)
 
 
 class JobRecommendationsView(APIView):
